@@ -10,6 +10,12 @@ import argparse
 import sys
 from collections import defaultdict
 
+# Try to import Figlet for fancy banner
+try:
+    from pyfiglet import Figlet
+except ImportError:
+    Figlet = None
+
 # Configuration via environment variables
 SANITIZE_DEFAULT = os.getenv('COMBOSORTER_SANITIZE', '1') != '0'
 ENFORCE_STRICT_DEFAULT = os.getenv('COMBOSORTER_STRICT', '0') == '1'
@@ -332,11 +338,84 @@ def process_chain(in_path, choices, params=None):
     finally:
         if prev_temp and os.path.exists(prev_temp): os.unlink(prev_temp)
 
+def print_banner():
+    """Print a dynamic banner that fits the terminal width."""
+    terminal_width = shutil.get_terminal_size((100, 20)).columns
+    banner_text = "DK3Y Combo Sorter"
+    subtitle_text = "A powerful, streaming combo processing tool"
+    
+    # ANSI color codes - rotating hacker colors
+    COLORS = [
+        "\033[92m",  # Bright green
+        "\033[96m",  # Bright cyan
+        "\033[93m",  # Bright yellow
+        "\033[91m",  # Bright red
+        "\033[95m",  # Bright magenta
+    ]
+    RESET = "\033[0m"   # Reset to default color
+    
+    if Figlet:
+        # Try slant font for that cool hacker aesthetic, fall back to others
+        fonts_to_try = ['slant', 'banner', 'big']
+        
+        for font in fonts_to_try:
+            try:
+                f = Figlet(font=font, width=terminal_width)
+                banner = f.renderText(banner_text)
+                subtitle = f.renderText(subtitle_text)
+                
+                # Rotate colors for each line
+                banner_lines = banner.split('\n')
+                colored_banner = '\n'.join(
+                    f"{COLORS[i % len(COLORS)]}{line}{RESET}" 
+                    for i, line in enumerate(banner_lines)
+                )
+                
+                subtitle_lines = subtitle.split('\n')
+                colored_subtitle = '\n'.join(
+                    f"{COLORS[(i + len(banner_lines)) % len(COLORS)]}{line}{RESET}" 
+                    for i, line in enumerate(subtitle_lines)
+                )
+                
+                print(colored_banner)
+                print(colored_subtitle)
+                return
+            except:
+                continue
+        
+        # Fallback to default if all fonts fail
+        f = Figlet(width=terminal_width)
+        banner = f.renderText(banner_text)
+        subtitle = f.renderText(subtitle_text)
+        
+        banner_lines = banner.split('\n')
+        colored_banner = '\n'.join(
+            f"{COLORS[i % len(COLORS)]}{line}{RESET}" 
+            for i, line in enumerate(banner_lines)
+        )
+        
+        subtitle_lines = subtitle.split('\n')
+        colored_subtitle = '\n'.join(
+            f"{COLORS[(i + len(banner_lines)) % len(COLORS)]}{line}{RESET}" 
+            for i, line in enumerate(subtitle_lines)
+        )
+        
+        print(colored_banner)
+        print(colored_subtitle)
+    else:
+        # Fallback if pyfiglet is not available
+        separator = "=" * min(len(banner_text) + 4, terminal_width)
+        centered_text = f"  {banner_text}  ".center(terminal_width)
+        centered_subtitle = f"  {subtitle_text}  ".center(terminal_width)
+        
+        print(f"{COLORS[0]}{separator}")
+        print(f"{COLORS[1]}{centered_text}")
+        print(f"{COLORS[2]}{centered_subtitle}")
+        print(f"{COLORS[3]}{separator}{RESET}")
+
 def main():
+    print_banner()
     print("""
-    ==============================
-    ComboSorter (Optimized v2.1)
-    ==============================
     [0] Normal Edit        [A] E/P to U/P
     [1] Strong Edit        [B] Custom Append
     [2] Extreme Edit       [C] Password Length
