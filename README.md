@@ -1,6 +1,6 @@
-# ⚡️ ComboSorter Optimized v2.1
+# ⚡️ ComboSorter
 
-A high-performance, stream-oriented toolkit for processing, cleaning, and transforming massive "combo" lists. Designed for speed, memory efficiency, and reliability on large-scale datasets.
+A high-performance Python toolkit for processing and sorting large structured text datasets. Optimised for speed and memory efficiency on high-volume files.
 
 ---
 
