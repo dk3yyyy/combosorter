@@ -75,14 +75,23 @@ def make_outpath(input_path, module_key):
     directory = os.path.dirname(input_path) or os.getcwd()
     return os.path.join(directory, f"{base}_{module_key}.txt")
 
+_progress_start = None
 def report_progress(count, text="Processing", finished=False):
-    """Visual progress counter that updates on the same line."""
+    """Visual progress counter with speed tracking."""
+    global _progress_start
+    if _progress_start is None: _progress_start = time.time()
+    
     if finished:
-        sys.stdout.write(f"\r[+] {text}: {count:,} lines completed.                            \n")
+        elapsed = time.time() - _progress_start
+        speed = count / elapsed if elapsed > 0 else 0
+        sys.stdout.write(f"\r[+] {text}: {count:,} lines completed ({speed:,.0f} L/s).              \n")
+        _progress_start = None
     else:
-        # Update more frequently for a "live" feel
-        if count % 10000 == 0:
-            sys.stdout.write(f"\r[*] {text}: {count:,} lines...")
+        # Update every 50k lines for speed and less I/O overhead
+        if count % 50000 == 0:
+            elapsed = time.time() - _progress_start
+            speed = count / elapsed if elapsed > 0 else 0
+            sys.stdout.write(f"\r[*] {text}: {count:,} lines ({speed:,.0f} L/s)...")
             sys.stdout.flush()
 
 # --- TRULY STREAMING PROCESSING MODULES ---
@@ -202,6 +211,65 @@ def remove_custom_stream(in_path, out_path, part, pattern, is_regex=False):
             outf.write(join_combo(left, right) + '\n'); o += 1
     report_progress(p, "Remove Custom", finished=True)
     return p, o
+
+def extract_email_pass_stream(in_path, out_path):
+    p = o = 0
+    # Common error markers or placeholder passwords to skip
+    JUNK_PASSWORDS = {'[fail]', 'failed', 'none', 'null', 'unknown', '(null)', 'password', '123456', '12345678', 'qwerty'}
+    
+    with open(in_path, 'r', encoding='utf-8', errors='ignore') as inf, open(out_path, 'w', encoding='utf-8') as outf:
+        for line in inf:
+            p += 1; report_progress(p)
+            line = line.strip()
+            if not line: continue
+            
+            # Split by common delimiters used in logs (colon, semicolon, comma, space, tab)
+            parts = re.split(r'[:;,\s\t]+', line)
+            for i in range(len(parts) - 1):
+                email_cand = parts[i].strip()
+                # 1. Use STRICT regex to ensure it's a real email with a valid TLD
+                if EMAIL_STRICT_RE.fullmatch(email_cand):
+                    password = parts[i+1].strip()
+                    
+                    # 2. Check for "Tricky" lines where the password is junk or an error
+                    if not password or password.lower() in JUNK_PASSWORDS:
+                        continue
+                    
+                    # 3. Ignore if the password looks like a URL or an IP (common in Stealer logs)
+                    if password.startswith(('http', 'www.')) or re.match(r'^\d{1,3}(\.\d{1,3}){3}$', password):
+                        continue
+                    
+                    # 4. Filter out lines where the 'password' is actually another email
+                    if EMAIL_STRICT_RE.fullmatch(password):
+                        continue
+                        
+                    outf.write(f"{email_cand}:{password}\n")
+                    o += 1
+                    break
+    report_progress(p, "E:P Extraction", finished=True)
+    return p, o
+
+def domain_stats_stream(in_path):
+    p = 0
+    stats = defaultdict(int)
+    with open(in_path, 'r', encoding='utf-8', errors='ignore') as inf:
+        for line in inf:
+            p += 1; report_progress(p, "Analyzing Domains")
+            left, _ = split_combo(line)
+            if '@' in left:
+                domain = left.split('@', 1)[1].lower().strip()
+                stats[domain] += 1
+            else:
+                stats['no_domain'] += 1
+    
+    report_progress(p, "Domain Analysis", finished=True)
+    # Sort by count descending
+    sorted_stats = sorted(stats.items(), key=lambda x: x[1], reverse=True)
+    print("\n--- Domain Statistics (Top 20) ---")
+    for domain, count in sorted_stats[:20]:
+        print(f"{domain}: {count:,}")
+    print("----------------------------------\n")
+    return p, p
 
 def split_domain_files_stream(in_path, out_dir):
     p = o = 0
@@ -329,6 +397,8 @@ def process_chain(in_path, choices, params=None):
                             if p % 10000 == 0: sys.stdout.write(f"\r[*] Dedupe: {p:,} lines (Unique: {len(seen):,})..."); sys.stdout.flush()
                             if h not in seen: seen.add(h); out.write(l); o += 1
                     report_progress(p, "Internal Dedupe", finished=True)
+            elif ch == 'H': p, o = extract_email_pass_stream(temp_in, out_path)
+            elif ch == 'I': p, o = domain_stats_stream(temp_in); out_path = temp_in # No file change
             else: continue
 
             if prev_temp: os.unlink(prev_temp)
@@ -414,6 +484,44 @@ def print_banner():
         print(f"{COLORS[3]}{separator}{RESET}")
 
 def main():
+    parser = argparse.ArgumentParser(description="DK3Y Combo Sorter - High Performance Tool")
+    parser.add_argument('-i', '--input', help='Input file path')
+    parser.add_argument('-m', '--modules', help='Modules to run (e.g. H,G)')
+    parser.add_argument('-d', '--domain', help='Domain for filter/append')
+    parser.add_argument('-c', '--country', help='Country code for filter')
+    parser.add_argument('--min-pass', type=int, default=0)
+    parser.add_argument('--max-pass', type=int, default=999)
+    parser.add_argument('--min-email', type=int, default=0)
+    parser.add_argument('--max-email', type=int, default=999)
+    parser.add_argument('--pattern', help='Pattern for removal')
+    parser.add_argument('--part', choices=['L', 'R'], default='L')
+    parser.add_argument('--out-dir', default='.')
+    parser.add_argument('--strict', action='store_true', help='Enforce strict email validation')
+    
+    args, unknown = parser.parse_known_args()
+
+    # --- BATCH MODE (CLI) ---
+    if args.input and args.modules:
+        if not os.path.exists(args.input):
+            print(f"Error: File '{args.input}' not found."); return
+            
+        params = {
+            'domain': args.domain, 'country': args.country,
+            'min_pass': args.min_pass, 'max_pass': args.max_pass,
+            'min_email': args.min_email, 'max_email': args.max_email,
+            'pattern': args.pattern, 'remove_part': args.part,
+            'append_part': args.part, 'out_dir': args.out_dir,
+            'strict': args.strict, 'sanitize': True
+        }
+        
+        print(f"[*] Batch Mode Started: {args.input} -> Modules: {args.modules}")
+        start_time = time.time()
+        final = process_chain(args.input, args.modules, params)
+        print(f"\n[SUCCESS] Result: {final}")
+        print(f"[TIME] Took {time.time() - start_time:.2f} seconds.")
+        return
+
+    # --- INTERACTIVE MODE ---
     print_banner()
     print("""
     [0] Normal Edit        [A] E/P to U/P
@@ -423,9 +531,9 @@ def main():
     [4] Decapitalize       [E] Remove Custom
     [5] Randomize          [F] Split Domain
     [6] Alphabetize        [G] Remove Duplicate
-    [7] Domain Filter      [Q] Quit
-    [8] Country Filter
-    [9] U/P to E/P
+    [7] Domain Filter      [H] Extract E:P
+    [8] Country Filter     [I] Domain Stats
+    [9] U/P to E/P          [Q] Quit
     ==============================
     """)
     while True:
@@ -434,14 +542,13 @@ def main():
         
         in_path = input('Enter input file path: ').strip()
         if not os.path.exists(in_path):
-            print(f"Error: File '{in_path}' not found.")
-            continue
+            print(f"Error: File '{in_path}' not found."); continue
             
         params = {}
         valid = True
         for ch in choice.split(','):
             ch = ch.strip()
-            if ch == '7' or ch == '9': params['domain'] = input(f'Module {ch} - Enter domain: ').strip()
+            if ch in ('7', '9'): params['domain'] = input(f'Module {ch} - Enter domain: ').strip()
             elif ch == '8': params['country'] = input('Module 8 - Enter country code: ').strip()
             elif ch == 'B':
                 params['append'] = input('Module B - String to append: ')
@@ -467,13 +574,10 @@ def main():
         try:
             start_time = time.time()
             final = process_chain(in_path, choice, params)
-            elapsed = time.time() - start_time
             print(f"\n[SUCCESS] Result: {final}")
-            print(f"[TIME] Took {elapsed:.2f} seconds.")
-        except KeyboardInterrupt:
-            print("\n[!] Operation cancelled by user.")
-        except Exception as e:
-            print(f"\n[ERROR] {e}")
+            print(f"[TIME] Took {time.time() - start_time:.2f} seconds.")
+        except KeyboardInterrupt: print("\n[!] Operation cancelled.")
+        except Exception as e: print(f"\n[ERROR] {e}")
 
 if __name__ == '__main__':
     main()

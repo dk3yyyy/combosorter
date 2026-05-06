@@ -27,8 +27,16 @@ No complex installation is required. This is a standalone Python utility.
   ```
 
 ### Running the Tool:
+
+**Interactive Mode:**
 ```bash
 python3 main.py
+```
+
+**Batch / CLI Mode:**
+```bash
+# Process a file with Extract E:P (H) and Remove Duplicates (G) without interactive prompts
+python3 main.py --input messy_logs.txt --modules H,G --out-dir ./output
 ```
 
 ---
@@ -54,6 +62,8 @@ python3 main.py
 | **E** | **Remove Custom** | Removes specific characters or Regex patterns from either part. |
 | **F** | **Split Domain** | Breaks a single large list into individual `{domain}.txt` files. |
 | **G** | **Remove Duplicate** | High-speed deduplication (supports `gsort` parallel processing). |
+| **H** | **Extract E:P** | Extracts valid `email:password` pairs from messy/unstructured logs. |
+| **I** | **Domain Stats** | Analyzes and displays statistics for the top 20 domains in the list. |
 
 ---
 
