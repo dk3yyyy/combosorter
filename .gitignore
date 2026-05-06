@@ -40,4 +40,5 @@ wheels/
 
 # Project-specific
 *.txt
+!requirements.txt
 output_*/
